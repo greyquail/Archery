@@ -1,0 +1,227 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Emoji Archer</title>
+    <style>
+        body { margin: 0; overflow: hidden; }
+        canvas { display: block; }
+        #hud { position: fixed; top: 10px; left: 10px; color: white; font-family: Arial; }
+    </style>
+</head>
+<body>
+    <div id="hud"></div>
+    <canvas id="gameCanvas"></canvas>
+    <script>
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+        canvas.width = window.innerWidth;
+        canvas.height = window.innerHeight;
+
+        // Performance constants
+        const MAX_ARROWS = 100;
+        const MAX_PARTICLES = 500;
+        const MAX_BLOODSTAINS = 200;
+
+        // Game constants
+        const GRAVITY = 0.3;
+        const EMOJI_TYPES = [
+            { chars: ['🚶', '🏃', '🧍'], colors: ['#FFB6C1', '#87CEEB', '#98FB98'] },
+            { chars: ['👨💻', '👨🚀', '👨🎓'], colors: ['#ADD8E6', '#F0E68C', '#D3D3D3'] }
+        ];
+
+        // Game state
+        let bow = { x: 100, y: canvas.height/2, angle: 0 };
+        let arrows = [];
+        let targets = [];
+        let particles = [];
+        let emojiPeople = [];
+        let bloodStains = [];
+        let score = 0;
+        let level = 1;
+        let combo = 0;
+        let lastHitTime = 0;
+
+        class Arrow {
+            constructor(x, y, velocity, angle) {
+                this.x = x;
+                this.y = y;
+                this.velocity = velocity;
+                this.angle = angle;
+                this.bounces = 3;
+                this.stuck = false;
+                this.active = true;
+            }
+
+            update() {
+                if(this.stuck || !this.active) return;
+                
+                this.x += this.velocity.x;
+                this.y += this.velocity.y;
+                this.velocity.y += GRAVITY;
+                this.angle = Math.atan2(this.velocity.y, this.velocity.x);
+
+                // Bounce with energy loss
+                if(this.y > canvas.height - 100 && this.bounces > 0) {
+                    this.y = canvas.height - 100;
+                    this.velocity.y *= -0.6;
+                    this.velocity.x *= 0.8;
+                    this.bounces--;
+                    if(Math.abs(this.velocity.y) < 2) this.stuck = true;
+                }
+
+                // Deactivate off-screen arrows
+                if(this.x < -100 || this.x > canvas.width + 100) this.active = false;
+            }
+        }
+
+        class SmartTarget {
+            constructor() {
+                this.x = Math.random() * canvas.width;
+                this.y = Math.random() * (canvas.height - 200) + 100;
+                this.size = 25;
+                this.color = `hsl(${Math.random() * 360}, 70%, 50%)`;
+                this.velocity = {
+                    x: (Math.random() - 0.5) * 4,
+                    y: (Math.random() - 0.5) * 4
+                };
+                this.angle = 0;
+            }
+
+            update() {
+                // Chaotic movement pattern
+                this.velocity.x += (Math.random() - 0.5) * 0.2;
+                this.velocity.y += (Math.random() - 0.5) * 0.2;
+                
+                // Contain within bounds
+                if(this.x < 50 || this.x > canvas.width - 50) this.velocity.x *= -1;
+                if(this.y < 50 || this.y > canvas.height - 150) this.velocity.y *= -1;
+
+                this.x += this.velocity.x;
+                this.y += this.velocity.y;
+                this.angle += Math.sqrt(this.velocity.x**2 + this.velocity.y**2) * 0.05;
+            }
+        }
+
+        // Optimized particle system
+        class Particle {
+            constructor(x, y, color) {
+                this.x = x;
+                this.y = y;
+                this.size = Math.random() * 3 + 2;
+                this.velocity = {
+                    x: (Math.random() - 0.5) * 5,
+                    y: (Math.random() - 0.5) * 5
+                };
+                this.alpha = 1;
+                this.color = color;
+                this.active = true;
+            }
+
+            update() {
+                this.velocity.y += 0.1;
+                this.x += this.velocity.x;
+                this.y += this.velocity.y;
+                this.alpha -= 0.02;
+                this.active = this.alpha > 0;
+            }
+        }
+
+        function gameLoop() {
+            // Cleanup arrays
+            arrows = arrows.filter(a => a.active).slice(-MAX_ARROWS);
+            particles = particles.filter(p => p.active).slice(-MAX_PARTICLES);
+            bloodStains = bloodStains.slice(-MAX_BLOODSTAINS);
+
+            // Update game state
+            arrows.forEach(arrow => arrow.update());
+            targets.forEach(target => target.update());
+            particles.forEach(particle => particle.update());
+
+            // Maintain target count
+            while(targets.length < 5 + level) {
+                targets.push(new SmartTarget());
+            }
+
+            // Collision detection
+            arrows.forEach((arrow, aIdx) => {
+                targets.forEach((target, tIdx) => {
+                    const dx = arrow.x - target.x;
+                    const dy = arrow.y - target.y;
+                    if(Math.sqrt(dx*dx + dy*dy) < target.size + 10) {
+                        score += 100 * ++combo;
+                        lastHitTime = Date.now();
+                        arrows.splice(aIdx, 1);
+                        targets.splice(tIdx, 1);
+                        createExplosion(target.x, target.y, target.color);
+                    }
+                });
+            });
+
+            // Update level
+            level = Math.floor(score / 1000) + 1;
+
+            // Drawing
+            ctx.fillStyle = '#111';
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+            
+            // Draw targets
+            targets.forEach(target => {
+                ctx.save();
+                ctx.translate(target.x, target.y);
+                ctx.rotate(target.angle);
+                ctx.fillStyle = target.color;
+                ctx.beginPath();
+                ctx.arc(0, 0, target.size, 0, Math.PI*2);
+                ctx.fill();
+                ctx.restore();
+            });
+
+            // Draw arrows
+            arrows.forEach(arrow => {
+                ctx.save();
+                ctx.translate(arrow.x, arrow.y);
+                ctx.rotate(arrow.angle);
+                ctx.fillStyle = '#B0BEC5';
+                ctx.fillRect(-15, -3, 30, 6);
+                ctx.restore();
+            });
+
+            // Draw particles
+            particles.forEach(particle => {
+                ctx.fillStyle = particle.color;
+                ctx.globalAlpha = particle.alpha;
+                ctx.beginPath();
+                ctx.arc(particle.x, particle.y, particle.size, 0, Math.PI*2);
+                ctx.fill();
+            });
+
+            requestAnimationFrame(gameLoop);
+        }
+
+        function createExplosion(x, y, color) {
+            for(let i = 0; i < 20; i++) {
+                particles.push(new Particle(x, y, color));
+            }
+        }
+
+        // Input handling
+        let dragStart = null;
+        canvas.addEventListener('mousedown', e => dragStart = { x: e.clientX, y: e.clientY });
+        canvas.addEventListener('mouseup', e => {
+            if(!dragStart) return;
+            const dx = dragStart.x - e.clientX;
+            const dy = dragStart.y - e.clientY;
+            arrows.push(new Arrow(
+                bow.x,
+                bow.y,
+                { x: dx/15, y: dy/15 },
+                Math.atan2(dy, dx)
+            );
+            dragStart = null;
+        });
+
+        // Start game
+        gameLoop();
+    </script>
+</body>
+</html>
